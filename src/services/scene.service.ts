@@ -4,13 +4,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export type AnimMode = 'none' | 'mode1' | 'mode2' | 'mode3';
 export type VisualStyle = 'styleA' | 'styleB' | 'styleC';
+export type OrientationType = 'perpendicular' | 'coplanar';
 
 interface RingData {
   mesh: THREE.Mesh;
   direction: THREE.Vector3;
   step: number; // -2 to +2
   basePosition: THREE.Vector3;
-  baseQuaternion: THREE.Quaternion; // Reference for animation
+  baseQuaternion: THREE.Quaternion; // The active reference for animation
+  quatPerpendicular: THREE.Quaternion; // Stored state: Facing the line
+  quatCoplanar: THREE.Quaternion; // Stored state: Parallel to the line
   phase: number;
   lineProgress: number; // 0.0 (start of line) to 1.0 (end of line)
   axisIndex: number; // 0 to 8
@@ -36,7 +39,6 @@ export class SceneService {
   private clock = new THREE.Clock();
 
   // State signals
-  // Default mode is 'none' (static), Default style is 'styleC' (Neon)
   public currentMode: WritableSignal<AnimMode> = signal('none');
   public currentStyle: WritableSignal<VisualStyle> = signal('styleC');
 
@@ -135,23 +137,38 @@ export class SceneService {
       
       const zAxis = new THREE.Vector3(0, 0, 1);
       
-      // Orientation Logic:
-      // The user wants the ring plane to be perpendicular to the line from origin to ring center.
+      // 1. Calculate Perpendicular Quaternion (Default)
+      // Ring normal aligns with direction vector
+      const qPerp = new THREE.Quaternion();
       if (dir.dot(zAxis) < -0.999) {
-          mesh.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+        qPerp.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
       } else if (dir.dot(zAxis) > 0.999) {
-          mesh.quaternion.identity();
+        qPerp.identity();
       } else {
-          mesh.quaternion.setFromUnitVectors(zAxis, dir);
+        qPerp.setFromUnitVectors(zAxis, dir);
       }
+
+      // 2. Calculate Coplanar Quaternion
+      // Ring normal must be perpendicular to direction vector.
+      // We find a stable "Up" vector to cross with.
+      const worldUp = new THREE.Vector3(0, 1, 0);
+      const tangent = new THREE.Vector3();
       
+      // If dir is too close to vertical, use X as reference to avoid instability
+      if (Math.abs(dir.dot(worldUp)) > 0.9) {
+        tangent.crossVectors(dir, new THREE.Vector3(1, 0, 0)).normalize();
+      } else {
+        tangent.crossVectors(dir, worldUp).normalize();
+      }
+      // Set ring normal (zAxis) to align with this tangent (which is perp to dir)
+      const qCoplanar = new THREE.Quaternion().setFromUnitVectors(zAxis, tangent);
+
+      // Default to perpendicular initially
+      mesh.quaternion.copy(qPerp);
       mesh.position.copy(pos);
       this.mainGroup.add(mesh);
       
       const phase = Math.abs(step) * 0.5 + axisIndex * 0.2;
-
-      // Calculate progress along the line (-2 to +2 range mapped to 0 to 1)
-      // Step goes -2, -1, 0, 1, 2. Total spread is 4.
       const lineProgress = (step + 2) / 4.0;
 
       this.rings.push({
@@ -159,7 +176,9 @@ export class SceneService {
         direction: dir.clone(),
         step: step,
         basePosition: pos.clone(),
-        baseQuaternion: mesh.quaternion.clone(),
+        baseQuaternion: qPerp.clone(),
+        quatPerpendicular: qPerp.clone(),
+        quatCoplanar: qCoplanar.clone(),
         phase: phase,
         lineProgress: lineProgress,
         axisIndex: axisIndex
@@ -168,20 +187,13 @@ export class SceneService {
 
     // Generate rings for each of the 9 axes
     axes.forEach((axis, axisIndex) => {
-      // 5 rings per axis: -2, -1, 0, +1, +2
       for (let step = -2; step <= 2; step++) {
-        
-        // Distance Calculation Logic:
-        // Center (step 0): 0
-        // Inner neighbors (step +/-1): 1 radius distance from center
-        // Outer neighbors (step +/-2): 1.5 radius distance from inner neighbor (2.5 total)
         let distance = 0;
         const absStep = Math.abs(step);
         
         if (absStep === 1) distance = 1.0;
         if (absStep === 2) distance = 2.5; // 1.0 + 1.5
         
-        // Apply direction sign
         if (step < 0) distance *= -1;
 
         const pos = axis.clone().multiplyScalar(distance);
@@ -212,65 +224,44 @@ export class SceneService {
   private applyAnimation(time: number) {
     const mode = this.currentMode();
     
-    // Automatic rotation disabled per user request
-    // this.mainGroup.rotation.y = time * 0.05;
-
     // Base cycle for mode1 and mode3
     const omega = (Math.PI * 2) / 8.0; 
     const t = time * omega; 
     
-    // Constants for Mode 2 sequence
-    const LOOP_DURATION = 3.6; // Total cycle time for all 9 rows
-    const WAVE_DURATION = 1.2; // Time for wave to travel down one axis
-    const ROW_OFFSET = LOOP_DURATION / 9.0; // Stagger per row (0.4s)
+    const LOOP_DURATION = 3.6; 
+    const WAVE_DURATION = 1.2; 
+    const ROW_OFFSET = LOOP_DURATION / 9.0; 
 
     this.rings.forEach((r, i) => {
-      // 1. Reset transform to base state (perpendicular to radius)
-      // If mode is 'none', this remains the final state for the frame.
+      // Always reset to the currently active base orientation
       r.mesh.position.copy(r.basePosition);
       r.mesh.quaternion.copy(r.baseQuaternion);
       
       if (mode === 'mode1') {
-        // Mode 1: Breathing / Opening
         const breathe = Math.sin(t); 
         const tiltAmt = THREE.MathUtils.degToRad(35) * breathe;
         r.mesh.rotateX(tiltAmt);
       } 
       else if (mode === 'mode2') {
-        // Mode 2: Sequential Axis Sweep
-        // We stagger each axis by calculating a local time for that specific axis.
         const axisStartTime = r.axisIndex * ROW_OFFSET;
-        
-        // Calculate where we are in the 3.6s loop, offset by the row's start time
         let localT = (time - axisStartTime) % LOOP_DURATION;
         if (localT < 0) localT += LOOP_DURATION;
         
-        // Check if the wave is currently passing through this axis
         if (localT < WAVE_DURATION) {
-          // Normalize 0..WAVE_DURATION to 0..1
           const normTime = localT / WAVE_DURATION;
-          
-          // Map to physical line progress (-0.5 to 1.5 ensures wave enters and leaves fully)
           const scanPos = THREE.MathUtils.lerp(-0.5, 1.5, normTime);
-          
           const dist = Math.abs(r.lineProgress - scanPos);
-          
-          // Create a bell curve influence
           const influence = Math.max(0, 1 - dist * 2.5); 
           const tiltAmt = THREE.MathUtils.degToRad(60) * influence;
-          
-          // Additional visual flair: slight scale up
           const scale = 1 + (0.3 * influence);
-          r.mesh.scale.setScalar(scale);
           
+          r.mesh.scale.setScalar(scale);
           r.mesh.rotateX(tiltAmt);
         } else {
-            // Reset scale if not active
             r.mesh.scale.setScalar(1);
         }
       } 
       else if (mode === 'mode3') {
-        // Mode 3: Swarm / Random-ish
         const phaseOffset = i * (Math.PI / 12); 
         const maxTilt = THREE.MathUtils.degToRad(30);
         const tiltAngle = maxTilt * Math.sin(t + phaseOffset);
@@ -298,17 +289,9 @@ export class SceneService {
 
     this.scene.background = new THREE.Color(0xe5e5e5);
 
-    // Palette for 9 axes
     const axisColors = [
-      0xf97316, // Orange
-      0xeab308, // Yellow
-      0x22c55e, // Green
-      0x06b6d4, // Cyan
-      0x3b82f6, // Blue
-      0x6366f1, // Indigo
-      0xa855f7, // Purple
-      0xd946ef, // Fuchsia
-      0xf43f5e  // Rose
+      0xf97316, 0xeab308, 0x22c55e, 0x06b6d4, 
+      0x3b82f6, 0x6366f1, 0xa855f7, 0xd946ef, 0xf43f5e
     ];
 
     this.rings.forEach((r) => {
@@ -322,7 +305,6 @@ export class SceneService {
 
       switch (style) {
         case 'styleA': 
-          // Mono
           newMat = new THREE.MeshStandardMaterial({ 
             color: 0x222222, 
             roughness: 0.5,
@@ -330,9 +312,7 @@ export class SceneService {
             side: THREE.DoubleSide
           });
           break;
-          
         case 'styleB': 
-          // Blue
           newMat = new THREE.MeshStandardMaterial({ 
             color: 0x2563eb,
             roughness: 0.3, 
@@ -340,9 +320,7 @@ export class SceneService {
             side: THREE.DoubleSide
           });
           break;
-          
         case 'styleC': 
-          // Neon
           const colorHex = axisColors[r.axisIndex % axisColors.length];
           const c = new THREE.Color(colorHex);
           newMat = new THREE.MeshStandardMaterial({ 
@@ -354,16 +332,14 @@ export class SceneService {
             side: THREE.DoubleSide
           });
           break;
-          
         default:
              newMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       }
-      
       r.mesh.material = newMat;
     });
   }
 
-  resetView() {
+  resetView(orientation: OrientationType) {
     // 1. Reset Camera
     if (this.camera && this.controls) {
       this.camera.position.set(12, 12, 12);
@@ -372,11 +348,22 @@ export class SceneService {
     }
     
     // 2. Reset Animation Time
-    // Restarting the clock sets elapsedTime to 0.
     this.clock = new THREE.Clock(); 
     this.clock.start();
 
-    // 3. Reset Mode to 'none' (static start)
+    // 3. Update Orientation for all rings
+    this.rings.forEach(r => {
+      // Pick the correct stored quaternion
+      const targetQ = (orientation === 'perpendicular') ? r.quatPerpendicular : r.quatCoplanar;
+      
+      // Update base so future animations are relative to this
+      r.baseQuaternion.copy(targetQ);
+      
+      // Snap mesh immediately
+      r.mesh.quaternion.copy(targetQ);
+    });
+
+    // 4. Reset Mode to 'none'
     this.currentMode.set('none');
   }
 

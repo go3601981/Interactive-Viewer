@@ -1,6 +1,6 @@
 import { Component, ElementRef, ViewChild, AfterViewInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { SceneService, AnimMode, VisualStyle } from './services/scene.service';
+import { SceneService, AnimMode, VisualStyle, OrientationType } from './services/scene.service';
 
 @Component({
   selector: 'app-root',
@@ -37,7 +37,7 @@ export class AppComponent implements AfterViewInit, OnDestroy {
     this.sceneService.setVisual(style);
   }
 
-  reset() {
-    this.sceneService.resetView();
+  reset(type: OrientationType) {
+    this.sceneService.resetView(type);
   }
 }

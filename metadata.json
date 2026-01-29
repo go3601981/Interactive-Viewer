@@ -1,0 +1,5 @@
+{
+  "name": "Three.js Interactive Viewer v1.0",
+  "description": "A 3D interactive scene with switchable animation modes and visual styles using Three.js and Angular.",
+  "requestFramePermissions": []
+}

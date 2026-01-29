@@ -4,7 +4,7 @@ import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 
 export type AnimMode = 'none' | 'mode1' | 'mode2' | 'mode3';
 export type VisualStyle = 'styleA' | 'styleB' | 'styleC';
-export type OrientationType = 'perpendicular' | 'coplanar';
+export type OrientationType = 'perpendicular' | 'coplanar' | 'faceOn';
 
 interface RingData {
   mesh: THREE.Mesh;
@@ -459,7 +459,8 @@ export class SceneService {
         this.camera.position.set(0, 15, 0.1);
         this.camera.up.set(0, 0, -1); 
       } else {
-        // Tunnel view for Perpendicular - straight down Z axis
+        // Default Z-axis view for Perpendicular and Face-On
+        // Tunnel view - straight down Z axis
         this.camera.position.set(0, 0, 15);
         this.camera.up.set(0, 1, 0); 
       }
@@ -474,7 +475,17 @@ export class SceneService {
 
     // 3. Update Orientation for all rings
     this.rings.forEach(r => {
-      const targetQ = (orientation === 'perpendicular') ? r.quatPerpendicular : r.quatCoplanar;
+      let targetQ: THREE.Quaternion;
+      
+      if (orientation === 'perpendicular') {
+        targetQ = r.quatPerpendicular;
+      } else if (orientation === 'coplanar') {
+        targetQ = r.quatCoplanar;
+      } else {
+        // faceOn: aligns with XY plane (Identity for TorusGeometry)
+        targetQ = new THREE.Quaternion().identity();
+      }
+      
       r.baseQuaternion.copy(targetQ);
       r.mesh.quaternion.copy(targetQ);
     });

@@ -85,16 +85,21 @@
       <div class="h-px bg-gray-700 mb-4"></div>
 
       <!-- Reset -->
-      <div class="grid grid-cols-2 gap-2 mb-4">
+      <div class="grid grid-cols-3 gap-2 mb-4">
         <button 
           (click)="reset('perpendicular')"
           class="cursor-pointer w-full flex items-center justify-center gap-2 px-2 py-2 rounded-md border border-gray-600 text-gray-400 text-xs font-medium hover:bg-gray-800 hover:text-white transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-500/50">
-          Reset Perp
+          Perspective
         </button>
         <button 
           (click)="reset('coplanar')"
           class="cursor-pointer w-full flex items-center justify-center gap-2 px-2 py-2 rounded-md border border-gray-600 text-gray-400 text-xs font-medium hover:bg-gray-800 hover:text-white transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-500/50">
-          Reset Coplanar
+          Coplanar
+        </button>
+        <button 
+          (click)="reset('faceOn')"
+          class="cursor-pointer w-full flex items-center justify-center gap-2 px-2 py-2 rounded-md border border-gray-600 text-gray-400 text-xs font-medium hover:bg-gray-800 hover:text-white transition-all active:scale-95 focus:outline-none focus:ring-2 focus:ring-gray-500/50">
+          Face-On
         </button>
       </div>
 

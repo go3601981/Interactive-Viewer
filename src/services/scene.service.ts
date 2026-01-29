@@ -16,7 +16,8 @@ interface RingData {
   quatCoplanar: THREE.Quaternion; // Stored state: Parallel to the line
   phase: number;
   lineProgress: number; // 0.0 (start of line) to 1.0 (end of line)
-  axisIndex: number; // 0 to 8
+  axisIndex: number; // 0 to 15
+  planeIndex: number; // 0 to 3
 }
 
 @Injectable({
@@ -41,6 +42,21 @@ export class SceneService {
   // State signals
   public currentMode: WritableSignal<AnimMode> = signal('none');
   public currentStyle: WritableSignal<VisualStyle> = signal('styleC');
+  public volume: WritableSignal<number> = signal(0.5);
+  public isMuted: WritableSignal<boolean> = signal(false);
+
+  // Track number of axes for animation calculations
+  private totalAxesCount: number = 0;
+
+  // Audio handling
+  private currentAudio: HTMLAudioElement | null = null;
+  // Store preloaded audio objects
+  private audioMap: Record<string, HTMLAudioElement> = {}; 
+  private readonly audioUrls: Record<string, string> = {
+    'mode1': 'https://www.expopass.com/reports/Rotate.mp3',
+    'mode2': 'https://www.expopass.com/reports/Sync.mp3',
+    'mode3': 'https://www.expopass.com/reports/Swarm.mp3'
+  };
 
   init(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -101,15 +117,48 @@ export class SceneService {
     // Trackball uses target to orbit around
     this.controls.target.set(0, 0, 0);
 
-    // 8. Initial Style
+    // 8. Preload Audio
+    this.preloadAudio();
+
+    // 9. Initial Style
     this.applyStyle(this.currentStyle());
 
-    // 9. Start Loop
+    // 10. Start Loop
     this.animate();
 
-    // 10. Handle Resize
+    // 11. Handle Resize
     window.addEventListener('resize', this.onWindowResize.bind(this));
   }
+
+  private preloadAudio() {
+    Object.entries(this.audioUrls).forEach(([mode, url]) => {
+      const audio = new Audio(url);
+      audio.loop = true;
+      audio.volume = this.volume();
+      audio.muted = this.isMuted();
+      audio.preload = 'auto'; // Force preloading
+      this.audioMap[mode] = audio;
+    });
+  }
+
+  // --- Audio Control Methods ---
+
+  setVolume(val: number) {
+    this.volume.set(val);
+    Object.values(this.audioMap).forEach(audio => {
+      audio.volume = val;
+    });
+  }
+
+  toggleMute() {
+    this.isMuted.update(m => !m);
+    const muted = this.isMuted();
+    Object.values(this.audioMap).forEach(audio => {
+      audio.muted = muted;
+    });
+  }
+
+  // -----------------------------
 
   private buildGeometry() {
     this.mainGroup.clear();
@@ -122,31 +171,46 @@ export class SceneService {
     // Tube thickness 0.025 for a wireframe-like elegance
     this.sharedGeometry = new THREE.TorusGeometry(RADIUS, 0.025, 12, 96);
 
-    // 9 Unique Axes (3 Cardinals + 6 Face Diagonals)
-    const axes: THREE.Vector3[] = [
-      // 3 Cardinals
-      new THREE.Vector3(1, 0, 0),
-      new THREE.Vector3(0, 1, 0),
-      new THREE.Vector3(0, 0, 1),
-      // 2 XY Diagonals
-      new THREE.Vector3(1, 1, 0).normalize(),
-      new THREE.Vector3(1, -1, 0).normalize(),
-      // 2 XZ Diagonals
-      new THREE.Vector3(1, 0, 1).normalize(),
-      new THREE.Vector3(1, 0, -1).normalize(),
-      // 2 YZ Diagonals
-      new THREE.Vector3(0, 1, 1).normalize(),
-      new THREE.Vector3(0, 1, -1).normalize()
-    ];
+    // Explicitly define 4 Planes of 4 Axes each = 16 Axes total.
+    // The Y-Axis (0,1,0) is shared (duplicated) in each plane to complete the visual group.
+    
+    const Y_AXIS = new THREE.Vector3(0, 1, 0);
+    
+    const axes: { vec: THREE.Vector3, planeId: number }[] = [
+      // --- Plane 1 (XY aligned) ---
+      { vec: new THREE.Vector3(1, 0, 0), planeId: 0 },              // X
+      { vec: Y_AXIS.clone(), planeId: 0 },                          // Y
+      { vec: new THREE.Vector3(1, 1, 0).normalize(), planeId: 0 },  // XY1
+      { vec: new THREE.Vector3(1, -1, 0).normalize(), planeId: 0 }, // XY2
 
-    const createRing = (pos: THREE.Vector3, dir: THREE.Vector3, step: number, axisIndex: number) => {
+      // --- Plane 2 (YZ aligned) ---
+      { vec: new THREE.Vector3(0, 0, 1), planeId: 1 },              // Z
+      { vec: Y_AXIS.clone(), planeId: 1 },                          // Y (Shared)
+      { vec: new THREE.Vector3(0, 1, 1).normalize(), planeId: 1 },  // YZ1
+      { vec: new THREE.Vector3(0, 1, -1).normalize(), planeId: 1 }, // YZ2
+
+      // --- Plane 3 (Diagonal 1) ---
+      { vec: new THREE.Vector3(1, 0, 1).normalize(), planeId: 2 },  // XZ1
+      { vec: Y_AXIS.clone(), planeId: 2 },                          // Y (Shared)
+      { vec: new THREE.Vector3(1, 1, 1).normalize(), planeId: 2 },  // SD1
+      { vec: new THREE.Vector3(1, -1, 1).normalize(), planeId: 2 }, // SD3
+
+      // --- Plane 4 (Diagonal 2) ---
+      { vec: new THREE.Vector3(1, 0, -1).normalize(), planeId: 3 }, // XZ2
+      { vec: Y_AXIS.clone(), planeId: 3 },                          // Y (Shared)
+      { vec: new THREE.Vector3(1, 1, -1).normalize(), planeId: 3 }, // SD2
+      { vec: new THREE.Vector3(1, -1, -1).normalize(), planeId: 3 } // SD4
+    ];
+    
+    this.totalAxesCount = axes.length; // 16
+
+    const createRing = (pos: THREE.Vector3, dir: THREE.Vector3, step: number, axisIndex: number, planeId: number) => {
       const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
       const mesh = new THREE.Mesh(this.sharedGeometry, material);
       
       const zAxis = new THREE.Vector3(0, 0, 1);
       
       // 1. Calculate Perpendicular Quaternion (Default)
-      // Ring normal aligns with direction vector
       const qPerp = new THREE.Quaternion();
       if (dir.dot(zAxis) < -0.999) {
         qPerp.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
@@ -157,23 +221,24 @@ export class SceneService {
       }
 
       // 2. Calculate Coplanar Quaternion
-      // Ring normal must be perpendicular to direction vector.
-      // We find a stable "Up" vector to cross with.
       const worldUp = new THREE.Vector3(0, 1, 0);
       const tangent = new THREE.Vector3();
       
-      // If dir is too close to vertical, use X as reference to avoid instability
       if (Math.abs(dir.dot(worldUp)) > 0.9) {
         tangent.crossVectors(dir, new THREE.Vector3(1, 0, 0)).normalize();
       } else {
         tangent.crossVectors(dir, worldUp).normalize();
       }
-      // Set ring normal (zAxis) to align with this tangent (which is perp to dir)
       const qCoplanar = new THREE.Quaternion().setFromUnitVectors(zAxis, tangent);
 
-      // Default to perpendicular initially
       mesh.quaternion.copy(qPerp);
       mesh.position.copy(pos);
+      
+      // Apply slight scale offset based on axisIndex to prevent Z-fighting on the overlapping Y-axes
+      // The later indices will be slightly larger, enveloping the previous ones
+      const scaleOffset = 1.0 + (axisIndex * 0.002); 
+      mesh.scale.setScalar(scaleOffset);
+
       this.mainGroup.add(mesh);
       
       const phase = Math.abs(step) * 0.5 + axisIndex * 0.2;
@@ -189,23 +254,24 @@ export class SceneService {
         quatCoplanar: qCoplanar.clone(),
         phase: phase,
         lineProgress: lineProgress,
-        axisIndex: axisIndex
+        axisIndex: axisIndex,
+        planeIndex: planeId
       });
     };
 
-    // Generate rings for each of the 9 axes
-    axes.forEach((axis, axisIndex) => {
+    // Generate rings for each of the axes
+    axes.forEach((item, axisIndex) => {
       for (let step = -2; step <= 2; step++) {
         let distance = 0;
         const absStep = Math.abs(step);
         
         if (absStep === 1) distance = 1.0;
-        if (absStep === 2) distance = 2.5; // 1.0 + 1.5
+        if (absStep === 2) distance = 2.5; 
         
         if (step < 0) distance *= -1;
 
-        const pos = axis.clone().multiplyScalar(distance);
-        createRing(pos, axis, step, axisIndex);
+        const pos = item.vec.clone().multiplyScalar(distance);
+        createRing(pos, item.vec, step, axisIndex, item.planeId);
       }
     });
   }
@@ -216,7 +282,6 @@ export class SceneService {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     
-    // TrackballControls needs explicit handleResize
     if (this.controls) {
       this.controls.handleResize();
     }
@@ -237,42 +302,42 @@ export class SceneService {
   private applyAnimation(time: number) {
     const mode = this.currentMode();
     
-    // Base cycle for mode1 and mode3
     const omega = (Math.PI * 2) / 8.0; 
     const t = time * omega; 
     
-    const LOOP_DURATION = 3.6; 
-    const WAVE_DURATION = 1.2; 
-    const ROW_OFFSET = LOOP_DURATION / 9.0; 
+    // Sync mode cycle duration
+    const CYCLE_DURATION = 3.0; 
 
     this.rings.forEach((r, i) => {
       // Always reset to the currently active base orientation
       r.mesh.position.copy(r.basePosition);
       r.mesh.quaternion.copy(r.baseQuaternion);
       
+      // Preserve base scale (including Z-fight fix)
+      const baseScale = 1.0 + (r.axisIndex * 0.002);
+      r.mesh.scale.setScalar(baseScale);
+      
       if (mode === 'mode1') {
-        const breathe = Math.sin(t); 
+        const breathe = Math.sin(t + r.planeIndex); // Offset phase by plane
         const tiltAmt = THREE.MathUtils.degToRad(35) * breathe;
         r.mesh.rotateX(tiltAmt);
       } 
       else if (mode === 'mode2') {
-        const axisStartTime = r.axisIndex * ROW_OFFSET;
-        let localT = (time - axisStartTime) % LOOP_DURATION;
-        if (localT < 0) localT += LOOP_DURATION;
+        // "Sync" Mode
+        // Pattern concentrated on the center (concentric layers based on distance/step)
+        // No linear movement.
+        // Full 360 degree rotation loops.
         
-        if (localT < WAVE_DURATION) {
-          const normTime = localT / WAVE_DURATION;
-          const scanPos = THREE.MathUtils.lerp(-0.5, 1.5, normTime);
-          const dist = Math.abs(r.lineProgress - scanPos);
-          const influence = Math.max(0, 1 - dist * 2.5); 
-          const tiltAmt = THREE.MathUtils.degToRad(60) * influence;
-          const scale = 1 + (0.3 * influence);
-          
-          r.mesh.scale.setScalar(scale);
-          r.mesh.rotateX(tiltAmt);
-        } else {
-            r.mesh.scale.setScalar(1);
-        }
+        const layer = Math.abs(r.step); // 0 (Center), 1 (Inner), 2 (Outer)
+        
+        // Delay phase by layer to create ripple/breathing effect from center
+        const phaseDelay = layer * 0.5; 
+        
+        // Continuous rotation over the cycle
+        const cycleProgress = ((time - phaseDelay) % CYCLE_DURATION) / CYCLE_DURATION;
+        const angle = cycleProgress * Math.PI * 2;
+        
+        r.mesh.rotateX(angle);
       } 
       else if (mode === 'mode3') {
         const phaseOffset = i * (Math.PI / 12); 
@@ -289,7 +354,34 @@ export class SceneService {
   }
 
   setAnimationMode(mode: AnimMode) {
+    if (this.currentMode() === mode) return;
+
     this.currentMode.set(mode);
+    this.updateAudio(mode);
+  }
+
+  private updateAudio(mode: AnimMode) {
+    // 1. Stop current audio
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio.currentTime = 0;
+      this.currentAudio = null;
+    }
+
+    // 2. Play new audio from map if exists
+    if (mode !== 'none' && this.audioMap[mode]) {
+      this.currentAudio = this.audioMap[mode];
+      // Sync properties just in case
+      this.currentAudio.volume = this.volume();
+      this.currentAudio.muted = this.isMuted();
+      
+      // Reset time again just to be safe if it was played before
+      this.currentAudio.currentTime = 0;
+      
+      this.currentAudio.play().catch(err => {
+        console.warn('Audio playback prevented by browser policy (user interaction required):', err);
+      });
+    }
   }
 
   setVisual(style: VisualStyle) {
@@ -302,9 +394,12 @@ export class SceneService {
 
     this.scene.background = new THREE.Color(0xe5e5e5);
 
+    // Extended palette for 16 axes
     const axisColors = [
-      0xf97316, 0xeab308, 0x22c55e, 0x06b6d4, 
-      0x3b82f6, 0x6366f1, 0xa855f7, 0xd946ef, 0xf43f5e
+      0xf97316, 0xeab308, 0x22c55e, 0x06b6d4, // Plane 1 Colors
+      0x3b82f6, 0x6366f1, 0xa855f7, 0xd946ef, // Plane 2 Colors
+      0xf43f5e, 0xef4444, 0x84cc16, 0x14b8a6, // Plane 3 Colors
+      0x64748b, 0xec4899, 0x8b5cf6, 0x10b981  // Plane 4 Colors
     ];
 
     this.rings.forEach((r) => {
@@ -327,9 +422,11 @@ export class SceneService {
           break;
         case 'styleB': 
           newMat = new THREE.MeshStandardMaterial({ 
-            color: 0x2563eb,
-            roughness: 0.3, 
-            metalness: 0.3,
+            color: 0x0ea5e9, // Bright Sky Blue (Water-like)
+            emissive: 0x004488, // Subtle deep blue glow
+            emissiveIntensity: 0.2,
+            roughness: 0.08, // Very smooth/wet
+            metalness: 0.1,
             side: THREE.DoubleSide
           });
           break;
@@ -355,19 +452,16 @@ export class SceneService {
   resetView(orientation: OrientationType) {
     // 1. Reset Camera
     if (this.camera && this.controls) {
-      this.controls.reset(); // Reset trackball internal state first
+      this.controls.reset(); 
       
       if (orientation === 'coplanar') {
         // Asterisk/Flower view - straight from Top (Y axis)
-        // Use a tiny offset in Z to avoid LookAt singularity with default Y-up
-        // Doubled Zoom: 15 instead of 30
         this.camera.position.set(0, 15, 0.1);
-        this.camera.up.set(0, 0, -1); // Orientation fix for top-down
+        this.camera.up.set(0, 0, -1); 
       } else {
         // Tunnel view for Perpendicular - straight down Z axis
-        // Doubled Zoom: 15 instead of 30
         this.camera.position.set(0, 0, 15);
-        this.camera.up.set(0, 1, 0); // Standard orientation
+        this.camera.up.set(0, 1, 0); 
       }
       
       this.controls.target.set(0, 0, 0);
@@ -380,24 +474,33 @@ export class SceneService {
 
     // 3. Update Orientation for all rings
     this.rings.forEach(r => {
-      // Pick the correct stored quaternion
       const targetQ = (orientation === 'perpendicular') ? r.quatPerpendicular : r.quatCoplanar;
-      
-      // Update base so future animations are relative to this
       r.baseQuaternion.copy(targetQ);
-      
-      // Snap mesh immediately
       r.mesh.quaternion.copy(targetQ);
     });
 
-    // 4. Reset Mode to 'none'
+    // 4. Reset Mode to 'none' and stop audio
     this.currentMode.set('none');
+    this.updateAudio('none');
   }
 
   dispose() {
     cancelAnimationFrame(this.animationId);
     window.removeEventListener('resize', this.onWindowResize.bind(this));
     
+    // Stop any playing audio
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio = null;
+    }
+    
+    // Clean up preloaded audio
+    Object.values(this.audioMap).forEach(audio => {
+        audio.pause();
+        audio.src = '';
+    });
+    this.audioMap = {};
+
     if (this.sharedGeometry) this.sharedGeometry.dispose();
     this.rings.forEach(r => {
       if (Array.isArray(r.mesh.material)) {

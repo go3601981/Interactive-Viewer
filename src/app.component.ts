@@ -18,6 +18,8 @@ export class AppComponent implements AfterViewInit, OnDestroy {
   // Expose signals to template
   activeMode = this.sceneService.currentMode;
   activeStyle = this.sceneService.currentStyle;
+  volume = this.sceneService.volume;
+  isMuted = this.sceneService.isMuted;
 
   ngAfterViewInit() {
     if (this.canvasRef) {
@@ -39,5 +41,15 @@ export class AppComponent implements AfterViewInit, OnDestroy {
 
   reset(type: OrientationType) {
     this.sceneService.resetView(type);
+  }
+
+  onVolumeChange(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const value = parseFloat(input.value);
+    this.sceneService.setVolume(value);
+  }
+
+  toggleMute() {
+    this.sceneService.toggleMute();
   }
 }

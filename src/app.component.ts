@@ -8,7 +8,7 @@ import { SceneService, AnimMode, VisualStyle, OrientationType } from './services
   imports: [CommonModule],
   templateUrl: './app.component.html',
   styles: [],
-  changeDetection: 1 // OnPush
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild('canvasContainer') canvasRef!: ElementRef<HTMLCanvasElement>;

@@ -1,7 +1,6 @@
-import { Component, ElementRef, ViewChild, AfterViewInit, OnDestroy, inject } from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewInit, OnDestroy, inject, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SceneService, AnimMode, VisualStyle, OrientationType } from './services/scene.service';
-import { ChangeDetectionStrategy } from '@angular/core';
 
 @Component({
   selector: 'app-root',
@@ -9,7 +8,7 @@ import { ChangeDetectionStrategy } from '@angular/core';
   imports: [CommonModule],
   templateUrl: './app.component.html',
   styles: [],
-  changeDetection: ChangeDetectionStrategy.OnPush,
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class AppComponent implements AfterViewInit, OnDestroy {
   @ViewChild('canvasContainer') canvasRef!: ElementRef<HTMLCanvasElement>;

@@ -1,6 +1,6 @@
 import { Injectable, signal, WritableSignal } from '@angular/core';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 
 export type AnimMode = 'none' | 'mode1' | 'mode2' | 'mode3';
 export type VisualStyle = 'styleA' | 'styleB' | 'styleC';
@@ -27,7 +27,7 @@ export class SceneService {
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
-  private controls!: OrbitControls;
+  private controls!: TrackballControls;
   
   private rings: RingData[] = [];
   private mainGroup = new THREE.Group();
@@ -55,7 +55,8 @@ export class SceneService {
     const near = 0.1;
     const far = 100;
     this.camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
-    this.camera.position.set(12, 12, 12);
+    // Default to Perpendicular view (Tunnel) with doubled zoom
+    this.camera.position.set(0, 0, 15);
 
     // 3. Renderer Setup
     this.renderer = new THREE.WebGLRenderer({ 
@@ -85,13 +86,20 @@ export class SceneService {
     // 6. Build Geometry
     this.buildGeometry();
 
-    // 7. Controls
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.05;
-    this.controls.autoRotate = false;
+    // 7. Controls - TrackballControls allows indefinite rotation
+    this.controls = new TrackballControls(this.camera, this.renderer.domElement);
+    this.controls.rotateSpeed = 2.0;
+    this.controls.zoomSpeed = 1.2;
+    this.controls.panSpeed = 0.8;
+    this.controls.noZoom = false;
+    this.controls.noPan = false;
+    this.controls.staticMoving = false; // Enable momentum
+    this.controls.dynamicDampingFactor = 0.1;
     this.controls.minDistance = 2;
     this.controls.maxDistance = 50;
+    
+    // Trackball uses target to orbit around
+    this.controls.target.set(0, 0, 0);
 
     // 8. Initial Style
     this.applyStyle(this.currentStyle());
@@ -207,6 +215,11 @@ export class SceneService {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    
+    // TrackballControls needs explicit handleResize
+    if (this.controls) {
+      this.controls.handleResize();
+    }
   }
 
   private animate() {
@@ -342,7 +355,21 @@ export class SceneService {
   resetView(orientation: OrientationType) {
     // 1. Reset Camera
     if (this.camera && this.controls) {
-      this.camera.position.set(12, 12, 12);
+      this.controls.reset(); // Reset trackball internal state first
+      
+      if (orientation === 'coplanar') {
+        // Asterisk/Flower view - straight from Top (Y axis)
+        // Use a tiny offset in Z to avoid LookAt singularity with default Y-up
+        // Doubled Zoom: 15 instead of 30
+        this.camera.position.set(0, 15, 0.1);
+        this.camera.up.set(0, 0, -1); // Orientation fix for top-down
+      } else {
+        // Tunnel view for Perpendicular - straight down Z axis
+        // Doubled Zoom: 15 instead of 30
+        this.camera.position.set(0, 0, 15);
+        this.camera.up.set(0, 1, 0); // Standard orientation
+      }
+      
       this.controls.target.set(0, 0, 0);
       this.controls.update();
     }
@@ -381,5 +408,6 @@ export class SceneService {
     });
     this.mainGroup.clear();
     this.renderer.dispose();
+    if (this.controls) this.controls.dispose();
   }
 }

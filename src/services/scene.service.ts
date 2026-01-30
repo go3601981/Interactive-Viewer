@@ -324,18 +324,23 @@ export class SceneService {
       } 
       else if (mode === 'mode2') {
         // "Sync" Mode
-        // Pattern concentrated on the center (concentric layers based on distance/step)
-        // No linear movement.
-        // Full 360 degree rotation loops.
+        // Modified: Outer rings move in opposite directions (mirroring).
+        // Movement develops towards center (inward ripple).
         
         const layer = Math.abs(r.step); // 0 (Center), 1 (Inner), 2 (Outer)
         
-        // Delay phase by layer to create ripple/breathing effect from center
-        const phaseDelay = layer * 0.5; 
+        // Invert delay so motion starts at outer edges and moves inward
+        // Max layer is 2, so (2 - layer) makes outer=0, center=2
+        const phaseDelay = (2 - layer) * 0.5; 
         
         // Continuous rotation over the cycle
         const cycleProgress = ((time - phaseDelay) % CYCLE_DURATION) / CYCLE_DURATION;
-        const angle = cycleProgress * Math.PI * 2;
+        
+        // Direction mirrors based on side of center (step < 0 vs step >= 0)
+        // This ensures the mirroring effect requested (outer lines moving in opposite directions)
+        const direction = r.step < 0 ? -1 : 1;
+        
+        const angle = cycleProgress * Math.PI * 2 * direction;
         
         r.mesh.rotateX(angle);
       } 
